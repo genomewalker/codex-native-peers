@@ -1,0 +1,36 @@
+name: Verify native peer candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: native-peer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install test runners
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+          cargo install just cargo-nextest --locked
+      - name: Build pinned candidate and run tests
+        run: python3 scripts/build.py 0.155.0-alpha.9.2
+      - name: Package candidate (not a release)
+        run: |
+          mkdir dist
+          tar -czf dist/native-codex-candidate.tar.gz -C upstream/codex-rs/target/release codex codex-peer-worker -C "$GITHUB_WORKSPACE/upstream" LICENSE
+          shasum -a 256 dist/native-codex-candidate.tar.gz > dist/SHA256SUMS
+          uname -sm > dist/platform.txt
+          cp compatibility.json dist/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-codex-candidate
+          path: dist/
+          retention-days: 14

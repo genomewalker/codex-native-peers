@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/openai/codex.git",
+  "releases": {
+    "0.155.0-alpha.9.2": {
+      "commit": "4607249e430dac1c961df4dc615beae88e33cec8",
+      "patch": "patches/0.155.0-alpha.9.2/native-peers.patch",
+      "status": "experimental",
+      "binaryPublished": false
+    }
+  }
+}

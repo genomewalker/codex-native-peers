@@ -25,7 +25,7 @@ jobs:
       - name: Package candidate (not a release)
         run: |
           mkdir dist
-          tar -czf dist/native-codex-candidate.tar.gz -C upstream/codex-rs/target/release codex codex-peer-worker -C "$GITHUB_WORKSPACE/upstream" LICENSE
+          tar -czf dist/native-codex-candidate.tar.gz -C upstream/codex-rs/target/release codex codex-peer-worker -C "$GITHUB_WORKSPACE/upstream" LICENSE NOTICE
           shasum -a 256 dist/native-codex-candidate.tar.gz > dist/SHA256SUMS
           uname -sm > dist/platform.txt
           cp compatibility.json dist/

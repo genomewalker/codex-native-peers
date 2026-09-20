@@ -38,7 +38,8 @@ def main():
     rust = checkout / 'codex-rs'
     run('just', 'test', '-p', 'codex-peer-messaging', cwd=rust)
     run('cargo', 'build', '--release', '--locked', '-j', '4', '-p', 'codex-cli',
-        '-p', 'codex-peer-messaging', '--bin', 'codex', '--bin', 'codex-peer-worker', cwd=rust)
+        '-p', 'codex-peer-messaging', '-p', 'codex-code-mode-host', '--bin', 'codex', '--bin', 'codex-peer-worker', '--bin', 'codex-code-mode-host', cwd=rust)
+    run(str(rust / 'target/release/codex-code-mode-host'), '--help')
     binary = rust / 'target/release/codex'
     worker = binary.with_name('codex-peer-worker')
     observed = subprocess.check_output([str(binary), '--version'], text=True).strip()

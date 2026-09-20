@@ -18,9 +18,11 @@ import sys
 import tempfile
 import platform
 import tarfile
+import time
 
 APP = Path('/Applications/ChatGPT.app/Contents/Resources/codex')
 ROOT = Path.home() / 'Library/Application Support/Relay/NativeCodex'
+EXECUTABLES = ('codex', 'codex-peer-worker', 'codex-code-mode-host')
 
 def version(binary):
     value = subprocess.check_output([str(binary), '--version'], text=True, timeout=10).strip()
@@ -40,9 +42,9 @@ def selected():
     folder = ROOT / current
     try:
         manifest = json.loads((folder / 'manifest.json').read_text())
-        if manifest['version'] == current and all(
-            digest(folder / name) == manifest['sha256'][name]
-            for name in ('codex', 'codex-peer-worker')
+        if manifest.get('schema') == 2 and manifest['version'] == current and all(
+            os.access(folder / name, os.X_OK) and digest(folder / name) == manifest['sha256'][name]
+            for name in EXECUTABLES
         ):
             return folder / 'codex'
     except (OSError, KeyError, ValueError):
@@ -73,14 +75,14 @@ def main():
             with tarfile.open(folder / asset) as archive:
                 members = archive.getmembers()
                 names = [m.name for m in members]
-                if len(names) != len(set(names)) or set(names) != {'codex', 'codex-peer-worker', 'LICENSE', 'NOTICE'}:
+                if len(names) != len(set(names)) or set(names) != set(EXECUTABLES) | {'LICENSE', 'NOTICE'}:
                     raise RuntimeError('Unexpected release contents')
                 for member in members:
                     if not member.isfile() or member.size > 600_000_000:
                         raise RuntimeError('Unsafe release member')
                     with archive.extractfile(member) as source, (folder / member.name).open('wb') as dest:
                         shutil.copyfileobj(source, dest)
-                for name in ('codex', 'codex-peer-worker'):
+                for name in EXECUTABLES:
                     (folder / name).chmod(0o700)
             subprocess.run([sys.executable, __file__, 'install', temporary], check=True)
         return
@@ -98,8 +100,9 @@ def main():
                     subprocess.Popen([sys.executable, __file__, 'update'],
                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                      start_new_session=True)
-            except FileExistsError:
-                pass
+            except OSError as error:
+                if not isinstance(error, FileExistsError):
+                    print('Update check unavailable; continuing with stock: ' + str(error), file=sys.stderr)
         else:
             os.environ['CODEX_NATIVE_PEER_DIR'] = '/tmp'
         os.execv(str(binary), [str(binary), *args.arguments])
@@ -139,6 +142,11 @@ def main():
         current = version(APP)
         if version(source / 'codex') != current:
             raise RuntimeError('Refusing a backend that does not match the installed app')
+        for name in EXECUTABLES:
+            if not os.access(source / name, os.X_OK):
+                raise RuntimeError('Missing or non-executable required companion: ' + name)
+        subprocess.run([str(source / 'codex-code-mode-host'), '--help'],
+                       check=True, timeout=15, stdout=subprocess.DEVNULL)
         scripts = Path(__file__).resolve().parent
         subprocess.run([sys.executable, str(scripts / 'test-native-peer-workers.py'),
                         str(source / 'codex-peer-worker')], check=True)
@@ -148,17 +156,26 @@ def main():
             raise RuntimeError('App updated during verification; refusing activation')
         ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = ROOT / current
-        if target.exists():
-            raise RuntimeError('Version already installed; preserve it for rollback before replacing')
+        if target.exists() and selected() != APP:
+            raise RuntimeError('A valid matching version is already installed')
         with tempfile.TemporaryDirectory(dir=ROOT, prefix='staging-') as temporary:
             stage = Path(temporary) / current
             stage.mkdir(mode=0o700)
             hashes = {}
-            for name in ('codex', 'codex-peer-worker'):
+            for name in EXECUTABLES:
                 shutil.copy2(source / name, stage / name)
                 hashes[name] = digest(stage / name)
-            (stage / 'manifest.json').write_text(json.dumps({'version': current, 'sha256': hashes}))
-            stage.rename(target)
+            (stage / 'manifest.json').write_text(json.dumps({'schema': 2, 'version': current, 'sha256': hashes}))
+            backup = None
+            if target.exists():
+                backup = ROOT / (current + '.incomplete-' + str(time.time_ns()))
+                target.rename(backup)
+            try:
+                stage.rename(target)
+            except OSError:
+                if backup is not None:
+                    backup.rename(target)
+                raise
         print(f'Installed tested backend at {target}. Activation is separate.')
 
 if __name__ == '__main__':

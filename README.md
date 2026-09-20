@@ -63,9 +63,15 @@ Restart the app again. Conversations and remote terminal sessions are not delete
 4. Keep previous installations for rollback; activate only on restart.
 5. Stop on conflicts or failed checks. Stock stays usable while a port is reviewed.
 
-Automatic GitHub binary downloading and update-triggered rebuilding are not yet
-enabled. This repository establishes the reproducible patch and CI release boundary,
-not a claim that future source incompatibilities can repair themselves safely.
+The dispatcher attempts a matching GitHub release download once when a new app
+version launches without a patch. It requests only `codex-<version>-peer.1`, checks
+SHA256SUMS and archive contents, and reruns installation tests. This launch stays
+on stock; a successful install is selected at the next restart. Private downloads
+require an authenticated `gh`. Failures are recorded in NativeCodex/update.log;
+retry explicitly with `python3 scripts/native-backend.py update`.
+
+Automatic source porting is not enabled. Unknown versions remain on stock until
+a reviewed, tested matching release exists. No candidate is automatically released.
 
 ## Security and limitations
 

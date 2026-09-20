@@ -16,6 +16,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import platform
+import tarfile
 
 APP = Path('/Applications/ChatGPT.app/Contents/Resources/codex')
 ROOT = Path.home() / 'Library/Application Support/Relay/NativeCodex'
@@ -49,14 +51,55 @@ def selected():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['install', 'enable', 'status', 'disable', 'exec'])
+    parser.add_argument('action', choices=['install', 'enable', 'status', 'disable', 'exec', 'update'])
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.action == 'update':
+        current = version(APP)
+        if selected() != APP:
+            print('Matching verified backend already installed')
+            return
+        tag = 'codex-' + current + '-peer.1'
+        asset = 'native-codex-' + platform.machine() + '.tar.gz'
+        with tempfile.TemporaryDirectory(prefix='native-codex-download-') as temporary:
+            folder = Path(temporary)
+            subprocess.run(['gh', 'release', 'download', tag, '--repo',
+                            'genomewalker/codex-native-peers', '--pattern', asset,
+                            '--pattern', 'SHA256SUMS', '--dir', temporary], check=True, timeout=120)
+            entries = [line.split() for line in (folder / 'SHA256SUMS').read_text().splitlines()]
+            expected = [parts[0] for parts in entries if len(parts) == 2 and parts[1] == asset]
+            if len(expected) != 1 or digest(folder / asset) != expected[0]:
+                raise RuntimeError('Release checksum mismatch')
+            with tarfile.open(folder / asset) as archive:
+                members = archive.getmembers()
+                names = [m.name for m in members]
+                if len(names) != len(set(names)) or set(names) != {'codex', 'codex-peer-worker', 'LICENSE', 'NOTICE'}:
+                    raise RuntimeError('Unexpected release contents')
+                for member in members:
+                    if not member.isfile() or member.size > 600_000_000:
+                        raise RuntimeError('Unsafe release member')
+                    with archive.extractfile(member) as source, (folder / member.name).open('wb') as dest:
+                        shutil.copyfileobj(source, dest)
+                for name in ('codex', 'codex-peer-worker'):
+                    (folder / name).chmod(0o700)
+            subprocess.run([sys.executable, __file__, 'install', temporary], check=True)
+        return
     if args.action == 'exec':
         binary = selected()
         if binary == APP:
             os.environ.pop('CODEX_NATIVE_PEER_DIR', None)
             print('Native peer patch unavailable for this app version; using stock backend.', file=sys.stderr)
+            ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+            attempt = ROOT / ('update-attempt-' + version(APP))
+            try:
+                with attempt.open('x') as marker:
+                    marker.write('Automatic matching-release download requested\n')
+                with (ROOT / 'update.log').open('ab') as log:
+                    subprocess.Popen([sys.executable, __file__, 'update'],
+                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                     start_new_session=True)
+            except FileExistsError:
+                pass
         else:
             os.environ['CODEX_NATIVE_PEER_DIR'] = '/tmp'
         os.execv(str(binary), [str(binary), *args.arguments])
@@ -74,6 +117,8 @@ def main():
             raise RuntimeError('Install a tested matching backend before activation')
         manager = ROOT / 'native-backend.py'
         shutil.copy2(Path(__file__).resolve(), manager)
+        for name in ('test-native-peer-workers.py', 'test-native-desktop.py'):
+            shutil.copy2(Path(__file__).resolve().with_name(name), ROOT / name)
         launcher = ROOT / 'codex'
         launcher.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' ' +
                             shlex.quote(str(manager)) + ' exec "$@"\n')
